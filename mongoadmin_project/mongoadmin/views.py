@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 import pymongo
 from bson.objectid import ObjectId
 from bson import json_util
+from pymongo.errors import InvalidId
 
 import cgi
 import json
@@ -161,12 +162,12 @@ class CollectionView(ConnectionDetailMixin, TemplateView):
             return data
 
         def prepare_document(document):
-            document_id = document.pop('_id')
+            document_id = urllib.quote_plus(str(document.pop('_id')))
             if fields:
-                document_fields = [json.dumps(get_field(document, field), default=json_util.default) for field in fields]
+                document_fields = [json.dumps(get_field(document, field), default=json_util.default, ensure_ascii=False) for field in fields]
             else:
                 document_fields = []
-            return document_id, ellipsize(json.dumps(document, default=json_util.default), 120), document_fields
+            return document_id, ellipsize(json.dumps(document, default=json_util.default, ensure_ascii=False), 120), document_fields
 
         documents_list = [prepare_document(document) for document in documents]
 
@@ -189,7 +190,10 @@ class CollectionView(ConnectionDetailMixin, TemplateView):
 
 class BaseDocumentView(ConnectionDetailMixin):
     def get_document(self):
-        document = self.collection.find_one({'_id': ObjectId(self.kwargs['pk'])})
+        try:
+            document = self.collection.find_one({'_id': ObjectId(self.kwargs['pk'])})
+        except InvalidId:
+	        document = self.collection.find_one({'_id': self.kwargs['pk']})
         return document
 
     def get(self, request, *args, **kwargs):
@@ -236,7 +240,7 @@ class UpdateDocumentView(BaseDocumentView, FormView):
         # document = self.document.copy()
         # del document['_id']
         # json_data = json.dumps(document, default=json_util.default)
-        json_data = json.dumps(self.document, default=json_util.default)
+        json_data = json.dumps(self.document, default=json_util.default, ensure_ascii=False)
         return {
             'json': json_data,
             'id': str(self.document['_id']),
@@ -259,6 +263,9 @@ class DeleteDocumentView(BaseDocumentView, TemplateView):
     def post(self, request, *args, **kwargs):
         self.setup_connection()
         self.document = self.get_document()
-        self.collection.remove(ObjectId(self.kwargs['pk']))
+        try:
+            self.collection.remove(ObjectId(self.kwargs['pk']))
+        except InvalidId:
+            self.collection.remove(self.kwargs['pk'])
         messages.success(self.request, 'The document %s was removed successfully.' % self.kwargs['pk'])
         return HttpResponseRedirect('../../')
